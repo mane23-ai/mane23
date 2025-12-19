@@ -42,7 +42,7 @@ export async function signUpWithEmail(
   email: string,
   password: string,
   name: string
-): Promise<AuthResult> {
+): Promise<AuthResult & { autoLogin?: boolean }> {
   const supabase = await createClient();
   const headersList = await headers();
   const origin = headersList.get('origin') || 'http://localhost:3000';
@@ -62,6 +62,16 @@ export async function signUpWithEmail(
   if (error) {
     return {
       error: getAuthErrorMessage(error.message),
+    };
+  }
+
+  // 이메일 인증이 비활성화된 경우 세션이 바로 생성됨
+  if (data.session) {
+    revalidatePath('/', 'layout');
+    return {
+      success: true,
+      autoLogin: true,
+      message: '회원가입이 완료되었습니다!',
     };
   }
 

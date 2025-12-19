@@ -106,9 +106,13 @@ export default function RegisterPage() {
       if (result?.error) {
         toast.error(result.error);
       } else if (result?.success) {
-        toast.success('회원가입이 완료되었습니다!');
-        // 이메일 인증 비활성화됨 - 바로 로그인 페이지로 이동
-        window.location.href = '/login';
+        toast.success(result.message || '회원가입이 완료되었습니다!');
+        // 자동 로그인된 경우 대시보드로, 아니면 로그인 페이지로
+        if (result.autoLogin) {
+          window.location.href = '/dashboard';
+        } else {
+          window.location.href = '/login';
+        }
       }
     } catch (error) {
       toast.error('회원가입에 실패했습니다. 다시 시도해주세요.');
