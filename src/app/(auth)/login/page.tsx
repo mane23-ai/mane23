@@ -60,7 +60,17 @@ export default function LoginPage() {
       const result = await signInWithEmail(formData.email, formData.password);
 
       if (result?.error) {
-        toast.error(result.error);
+        // 이메일 미인증 시 인증 페이지로 안내
+        if (result.error.includes('이메일 인증')) {
+          toast.error(result.error, {
+            action: {
+              label: '인증 안내',
+              onClick: () => router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`),
+            },
+          });
+        } else {
+          toast.error(result.error);
+        }
       }
       // 성공 시 서버 액션에서 리다이렉트 처리
     } catch (error) {

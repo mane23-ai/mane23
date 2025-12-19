@@ -47,7 +47,7 @@ export async function signUpWithEmail(
   const headersList = await headers();
   const origin = headersList.get('origin') || 'http://localhost:3000';
 
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -67,7 +67,7 @@ export async function signUpWithEmail(
 
   return {
     success: true,
-    message: '회원가입이 완료되었습니다. 이메일을 확인해주세요.',
+    message: '인증 이메일을 발송했습니다. 이메일을 확인해주세요.',
   };
 }
 
