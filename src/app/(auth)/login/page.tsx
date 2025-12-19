@@ -3,6 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { Eye, EyeOff, Loader2, Github } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -74,6 +75,10 @@ export default function LoginPage() {
       }
       // 성공 시 서버 액션에서 리다이렉트 처리
     } catch (error) {
+      // redirect()는 에러를 throw하므로 다시 throw
+      if (isRedirectError(error)) {
+        throw error;
+      }
       toast.error('로그인에 실패했습니다. 다시 시도해주세요.');
     } finally {
       setIsLoading(false);
