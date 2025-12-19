@@ -135,3 +135,42 @@ export function useDeleteContent() {
     },
   })
 }
+
+// 콘텐츠 검증
+async function verifyContent(id: string): Promise<{
+  content: Content
+  verification: {
+    isVerified: boolean
+    score: number
+    issues: Array<{
+      type: string
+      severity: string
+      message: string
+    }>
+    suggestions: string[]
+    verifiedAt: string
+  }
+}> {
+  const response = await fetch(`/api/contents/${id}/verify`, {
+    method: 'POST',
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || '콘텐츠 검증에 실패했습니다')
+  }
+
+  return response.json()
+}
+
+export function useVerifyContent() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: verifyContent,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['contents'] })
+      queryClient.setQueryData(['contents', data.content.id], data.content)
+    },
+  })
+}

@@ -164,3 +164,83 @@ export function useAccountingSummary(params: AccountingRecordsQueryParams = {}) 
     summary: summary || { totalIncome: 0, totalExpense: 0, balance: 0 },
   }
 }
+
+// 리포트 관련 타입
+interface AccountingReport {
+  period: {
+    start: string
+    end: string
+  }
+  summary: {
+    totalIncome: number
+    totalExpense: number
+    balance: number
+    incomeCount: number
+    expenseCount: number
+    totalRecords: number
+  }
+  monthlyData: Array<{
+    month: string
+    income: number
+    expense: number
+    balance: number
+  }>
+  categoryData: Array<{
+    category: string
+    income: number
+    expense: number
+    count: number
+  }>
+  projectData: Array<{
+    projectId: string
+    name: string
+    income: number
+    expense: number
+    profit: number
+    count: number
+  }>
+  records: AccountingRecord[]
+  generatedAt: string
+}
+
+interface ReportQueryParams {
+  workspaceId: string
+  startDate?: string
+  endDate?: string
+}
+
+// 리포트 조회
+async function fetchAccountingReport(params: ReportQueryParams): Promise<AccountingReport> {
+  const searchParams = new URLSearchParams()
+  searchParams.set('workspace_id', params.workspaceId)
+  if (params.startDate) searchParams.set('start_date', params.startDate)
+  if (params.endDate) searchParams.set('end_date', params.endDate)
+
+  const response = await fetch(`/api/accounting-records/report?${searchParams.toString()}`)
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || '리포트를 불러오는데 실패했습니다')
+  }
+  return response.json()
+}
+
+// 리포트 훅
+export function useAccountingReport(params: ReportQueryParams) {
+  return useQuery({
+    queryKey: ['accounting-report', params],
+    queryFn: () => fetchAccountingReport(params),
+    enabled: !!params.workspaceId,
+  })
+}
+
+// CSV 다운로드 함수
+export function downloadAccountingCSV(params: ReportQueryParams) {
+  const searchParams = new URLSearchParams()
+  searchParams.set('workspace_id', params.workspaceId)
+  searchParams.set('format', 'csv')
+  if (params.startDate) searchParams.set('start_date', params.startDate)
+  if (params.endDate) searchParams.set('end_date', params.endDate)
+
+  const url = `/api/accounting-records/report?${searchParams.toString()}`
+  window.open(url, '_blank')
+}

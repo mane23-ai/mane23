@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -9,7 +9,6 @@ import {
   Terminal,
   Code2,
   FileCode,
-  GitCommit,
   Clock,
   CheckCircle,
   XCircle,
@@ -24,6 +23,7 @@ import {
   Play,
   Square,
   RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,7 +37,6 @@ import {
 } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Tooltip,
   TooltipContent,
@@ -45,96 +44,41 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { useProject } from '@/hooks/use-projects';
+import {
+  useVibeSessions,
+  useVibeSession,
+  useCreateVibeSession,
+  useVibeCommands,
+  useExecuteVibeCommand,
+} from '@/hooks/use-vibe';
+import type { Tables } from '@/types/database';
 
-// 임시 프로젝트 데이터
-const projectData = {
-  '1': { name: '웹 대시보드 개발', github_repo_url: 'https://github.com/user/dashboard' },
-  '2': { name: 'API 서버 구축', github_repo_url: 'https://github.com/user/api-server' },
-};
-
-interface VibeCommand {
-  id: string;
-  userInput: string;
-  status: 'pending' | 'executing' | 'completed' | 'failed';
-  aiInterpretation?: string;
-  cliCommands?: string[];
-  output?: string;
-  codeChanges?: {
-    file: string;
-    type: 'created' | 'modified' | 'deleted';
-    diff?: string;
-  }[];
-  timestamp: Date;
-  duration?: number;
-}
-
-// 임시 명령 히스토리
-const initialCommands: VibeCommand[] = [
-  {
-    id: '1',
-    userInput: '사용자 인증 기능을 추가해줘. 이메일과 비밀번호로 로그인할 수 있어야 해.',
-    status: 'completed',
-    aiInterpretation: '이메일/비밀번호 기반 로그인 기능을 구현합니다. Supabase Auth를 사용하여 인증 시스템을 구축하겠습니다.',
-    cliCommands: [
-      'npm install @supabase/supabase-js @supabase/ssr',
-      'claude code "Create auth context and login form component"',
-    ],
-    output: `✓ Installing dependencies...
-✓ Creating src/lib/supabase/client.ts
-✓ Creating src/components/auth/login-form.tsx
-✓ Creating src/app/(auth)/login/page.tsx
-✓ Updating src/middleware.ts
-
-Done! Created authentication system with:
-- Login form component
-- Supabase client configuration
-- Protected route middleware`,
-    codeChanges: [
-      { file: 'src/lib/supabase/client.ts', type: 'created' },
-      { file: 'src/components/auth/login-form.tsx', type: 'created' },
-      { file: 'src/app/(auth)/login/page.tsx', type: 'created' },
-      { file: 'src/middleware.ts', type: 'modified' },
-    ],
-    timestamp: new Date('2024-01-15T14:30:00'),
-    duration: 45,
-  },
-  {
-    id: '2',
-    userInput: '대시보드에 사용자 통계 차트를 추가해줘',
-    status: 'completed',
-    aiInterpretation: '대시보드 페이지에 사용자 통계를 시각화하는 차트 컴포넌트를 추가합니다. Recharts 라이브러리를 사용하겠습니다.',
-    cliCommands: [
-      'npm install recharts',
-      'claude code "Create user statistics chart component"',
-    ],
-    output: `✓ Installing recharts...
-✓ Creating src/components/dashboard/user-stats-chart.tsx
-✓ Updating src/app/(dashboard)/page.tsx
-
-Chart component created with:
-- Line chart for daily active users
-- Bar chart for registration trends
-- Responsive design`,
-    codeChanges: [
-      { file: 'src/components/dashboard/user-stats-chart.tsx', type: 'created' },
-      { file: 'src/app/(dashboard)/page.tsx', type: 'modified' },
-    ],
-    timestamp: new Date('2024-01-15T14:35:00'),
-    duration: 32,
-  },
-];
+type VibeCommand = Tables<'vibe_commands'>;
 
 export default function VibeCodingPage() {
   const params = useParams();
   const projectId = params.id as string;
-  const project = projectData[projectId as keyof typeof projectData];
 
-  const [commands, setCommands] = useState<VibeCommand[]>(initialCommands);
+  // 프로젝트 데이터 조회
+  const { data: project, isLoading: projectLoading, error: projectError } = useProject(projectId);
+
+  // 세션 관리
+  const { data: sessions, isLoading: sessionsLoading } = useVibeSessions(projectId);
+  const createSession = useCreateVibeSession();
+
+  // 현재 활성 세션 (가장 최근 active 세션 또는 첫 번째 세션)
+  const activeSession = sessions?.find((s) => s.status === 'active') || sessions?.[0];
+  const { data: sessionWithCommands, refetch: refetchSession } = useVibeSession(activeSession?.id);
+
+  // 명령어 관리
+  const { data: commands = [], refetch: refetchCommands } = useVibeCommands(activeSession?.id);
+  const executeCommand = useExecuteVibeCommand();
+
+  // UI 상태
   const [inputValue, setInputValue] = useState('');
-  const [isExecuting, setIsExecuting] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState('terminal');
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -146,64 +90,33 @@ export default function VibeCodingPage() {
     }
   }, [commands]);
 
+  // 세션 생성 (없는 경우)
+  const ensureSession = useCallback(async () => {
+    if (!activeSession && !createSession.isPending) {
+      await createSession.mutateAsync({ project_id: projectId });
+    }
+  }, [activeSession, createSession, projectId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isExecuting) return;
+    if (!inputValue.trim() || executeCommand.isPending) return;
 
-    const newCommand: VibeCommand = {
-      id: Date.now().toString(),
-      userInput: inputValue,
-      status: 'pending',
-      timestamp: new Date(),
-    };
+    // 세션이 없으면 생성
+    let sessionId = activeSession?.id;
+    if (!sessionId) {
+      const newSession = await createSession.mutateAsync({ project_id: projectId });
+      sessionId = newSession.id;
+    }
 
-    setCommands((prev) => [...prev, newCommand]);
+    // 명령어 실행
+    await executeCommand.mutateAsync({
+      session_id: sessionId,
+      user_input: inputValue.trim(),
+    });
+
     setInputValue('');
-    setIsExecuting(true);
-
-    // 시뮬레이션: AI 해석 단계
-    setTimeout(() => {
-      setCommands((prev) =>
-        prev.map((cmd) =>
-          cmd.id === newCommand.id
-            ? {
-                ...cmd,
-                status: 'executing',
-                aiInterpretation: `"${inputValue}" 요청을 분석하고 실행합니다...`,
-                cliCommands: ['claude code "' + inputValue + '"'],
-              }
-            : cmd
-        )
-      );
-    }, 1000);
-
-    // 시뮬레이션: 실행 완료
-    setTimeout(() => {
-      setCommands((prev) =>
-        prev.map((cmd) =>
-          cmd.id === newCommand.id
-            ? {
-                ...cmd,
-                status: 'completed',
-                output: `✓ 요청을 성공적으로 처리했습니다.
-
-작업 내용:
-- 요청 분석 완료
-- 코드 생성/수정 완료
-- 테스트 통과
-
-변경된 파일: 2개`,
-                codeChanges: [
-                  { file: 'src/components/example.tsx', type: 'created' },
-                  { file: 'src/app/page.tsx', type: 'modified' },
-                ],
-                duration: 28,
-              }
-            : cmd
-        )
-      );
-      setIsExecuting(false);
-    }, 3000);
+    refetchCommands();
+    refetchSession();
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -222,6 +135,8 @@ export default function VibeCodingPage() {
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'failed':
         return <XCircle className="h-4 w-4 text-red-500" />;
+      default:
+        return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
@@ -235,15 +150,32 @@ export default function VibeCodingPage() {
         return '완료';
       case 'failed':
         return '실패';
+      default:
+        return '알 수 없음';
     }
   };
 
-  if (!project) {
+  // 로딩 상태
+  if (projectLoading || sessionsLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="mt-4 text-muted-foreground">로딩 중...</p>
+      </div>
+    );
+  }
+
+  // 에러 상태
+  if (projectError || !project) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12">
+        <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
         <h2 className="text-xl font-semibold">프로젝트를 찾을 수 없습니다</h2>
+        <p className="text-muted-foreground mt-2">
+          {projectError instanceof Error ? projectError.message : '프로젝트 정보를 불러올 수 없습니다.'}
+        </p>
         <Button className="mt-4" asChild>
-          <Link href="/dashboard/projects">
+          <Link href="/projects">
             <ArrowLeft className="mr-2 h-4 w-4" />
             프로젝트 목록으로
           </Link>
@@ -252,6 +184,54 @@ export default function VibeCodingPage() {
     );
   }
 
+  // AI 해석 정보 파싱
+  const parseAiInterpretation = (aiInterpretation: unknown) => {
+    if (!aiInterpretation) return null;
+    if (typeof aiInterpretation === 'string') {
+      try {
+        return JSON.parse(aiInterpretation);
+      } catch {
+        return { reasoning: aiInterpretation };
+      }
+    }
+    return aiInterpretation as {
+      intent?: string;
+      confidence?: number;
+      suggestedActions?: string[];
+      reasoning?: string;
+    };
+  };
+
+  // CLI 명령어 파싱
+  const parseCliCommands = (cliCommands: unknown): string[] => {
+    if (!cliCommands) return [];
+    if (Array.isArray(cliCommands)) return cliCommands;
+    if (typeof cliCommands === 'string') {
+      try {
+        const parsed = JSON.parse(cliCommands);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [cliCommands];
+      }
+    }
+    return [];
+  };
+
+  // 코드 변경 파싱
+  const parseCodeChanges = (codeChanges: unknown): { file: string; type: string }[] => {
+    if (!codeChanges) return [];
+    if (Array.isArray(codeChanges)) return codeChanges as { file: string; type: string }[];
+    if (typeof codeChanges === 'string') {
+      try {
+        const parsed = JSON.parse(codeChanges);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
   return (
     <TooltipProvider>
       <div className={cn('space-y-4', isFullscreen && 'fixed inset-0 z-50 bg-background p-4')}>
@@ -259,7 +239,7 @@ export default function VibeCodingPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
-              <Link href={`/dashboard/projects/${projectId}`}>
+              <Link href={`/projects/${projectId}`}>
                 <ArrowLeft className="h-4 w-4" />
               </Link>
             </Button>
@@ -272,8 +252,8 @@ export default function VibeCodingPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant={isExecuting ? 'default' : 'secondary'} className="gap-1.5">
-              {isExecuting ? (
+            <Badge variant={executeCommand.isPending ? 'default' : 'secondary'} className="gap-1.5">
+              {executeCommand.isPending ? (
                 <>
                   <Loader2 className="h-3 w-3 animate-spin" />
                   실행 중
@@ -298,6 +278,14 @@ export default function VibeCodingPage() {
               <TooltipContent>
                 {isFullscreen ? '일반 모드' : '전체 화면'}
               </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="icon" onClick={() => { refetchCommands(); refetchSession(); }}>
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>새로고침</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -327,11 +315,26 @@ export default function VibeCodingPage() {
                 <CardTitle className="text-base flex items-center gap-2">
                   <Terminal className="h-4 w-4" />
                   터미널
+                  {activeSession && (
+                    <Badge variant="outline" className="ml-2 text-xs">
+                      세션: {activeSession.id.slice(0, 8)}...
+                    </Badge>
+                  )}
                 </CardTitle>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" className="h-7 px-2">
-                    <RefreshCw className="h-3 w-3 mr-1" />
-                    초기화
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2"
+                    onClick={ensureSession}
+                    disabled={createSession.isPending}
+                  >
+                    {createSession.isPending ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                    )}
+                    새 세션
                   </Button>
                 </div>
               </div>
@@ -351,137 +354,185 @@ export default function VibeCodingPage() {
                         자연어로 원하는 기능을 설명하면 Claude가 코드를 작성합니다.
                         아래 입력창에 요청사항을 입력해보세요.
                       </p>
+                      {!activeSession && (
+                        <Button
+                          className="mt-4"
+                          onClick={ensureSession}
+                          disabled={createSession.isPending}
+                        >
+                          {createSession.isPending ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              세션 생성 중...
+                            </>
+                          ) : (
+                            '새 세션 시작'
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
-                    commands.map((cmd, index) => (
-                      <div key={cmd.id} className="space-y-2">
-                        {index > 0 && <Separator className="my-4" />}
+                    commands.map((cmd, index) => {
+                      const aiInterpretation = parseAiInterpretation(cmd.ai_interpretation);
+                      const cliCommands = parseCliCommands(cmd.cli_commands);
+                      const codeChanges = parseCodeChanges(cmd.code_changes);
+                      const executionResult = cmd.execution_result as { success?: boolean; output?: string; error?: string } | null;
 
-                        {/* User Input */}
-                        <div className="flex items-start gap-3">
-                          <div className="rounded-full bg-primary p-1.5">
-                            <ChevronRight className="h-3 w-3 text-primary-foreground" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xs font-medium text-primary">You</span>
-                              <span className="text-xs text-muted-foreground">
-                                {cmd.timestamp.toLocaleTimeString('ko-KR')}
-                              </span>
-                              {getStatusIcon(cmd.status)}
-                              <span className="text-xs text-muted-foreground">
-                                {getStatusLabel(cmd.status)}
-                              </span>
+                      return (
+                        <div key={cmd.id} className="space-y-2">
+                          {index > 0 && <Separator className="my-4" />}
+
+                          {/* User Input */}
+                          <div className="flex items-start gap-3">
+                            <div className="rounded-full bg-primary p-1.5">
+                              <ChevronRight className="h-3 w-3 text-primary-foreground" />
                             </div>
-                            <p className="text-sm">{cmd.userInput}</p>
-                          </div>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6"
-                                onClick={() => copyToClipboard(cmd.userInput, cmd.id)}
-                              >
-                                {copiedId === cmd.id ? (
-                                  <Check className="h-3 w-3" />
-                                ) : (
-                                  <Copy className="h-3 w-3" />
-                                )}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>복사</TooltipContent>
-                          </Tooltip>
-                        </div>
-
-                        {/* AI Response */}
-                        {cmd.aiInterpretation && (
-                          <div className="ml-8 mt-2">
-                            <div className="rounded-lg bg-muted/50 p-3 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <Code2 className="h-3 w-3 text-muted-foreground" />
-                                <span className="text-xs font-medium text-muted-foreground">
-                                  Claude 해석
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-xs font-medium text-primary">You</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {new Date(cmd.created_at).toLocaleTimeString('ko-KR')}
+                                </span>
+                                {getStatusIcon(cmd.status)}
+                                <span className="text-xs text-muted-foreground">
+                                  {getStatusLabel(cmd.status)}
                                 </span>
                               </div>
-                              <p className="text-sm text-muted-foreground">
-                                {cmd.aiInterpretation}
-                              </p>
+                              <p className="text-sm">{cmd.user_input}</p>
                             </div>
-                          </div>
-                        )}
-
-                        {/* CLI Commands */}
-                        {cmd.cliCommands && cmd.cliCommands.length > 0 && (
-                          <div className="ml-8 mt-2">
-                            <div className="rounded-lg bg-zinc-950 p-3 font-mono text-xs">
-                              {cmd.cliCommands.map((cliCmd, i) => (
-                                <div key={i} className="text-green-400">
-                                  $ {cliCmd}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Output */}
-                        {cmd.output && (
-                          <div className="ml-8 mt-2">
-                            <div className="rounded-lg bg-zinc-950 p-3 font-mono text-xs text-zinc-300 whitespace-pre-wrap">
-                              {cmd.output}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Code Changes */}
-                        {cmd.codeChanges && cmd.codeChanges.length > 0 && (
-                          <div className="ml-8 mt-2">
-                            <div className="flex items-center gap-2 mb-2">
-                              <FileCode className="h-3 w-3 text-muted-foreground" />
-                              <span className="text-xs font-medium text-muted-foreground">
-                                변경된 파일 ({cmd.codeChanges.length})
-                              </span>
-                            </div>
-                            <div className="space-y-1">
-                              {cmd.codeChanges.map((change, i) => (
-                                <div
-                                  key={i}
-                                  className="flex items-center gap-2 text-xs rounded px-2 py-1 bg-muted/50"
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={() => copyToClipboard(cmd.user_input, cmd.id)}
                                 >
-                                  <Badge
-                                    variant="outline"
-                                    className={cn(
-                                      'text-[10px] px-1',
-                                      change.type === 'created' && 'text-green-500 border-green-500/50',
-                                      change.type === 'modified' && 'text-yellow-500 border-yellow-500/50',
-                                      change.type === 'deleted' && 'text-red-500 border-red-500/50'
-                                    )}
-                                  >
-                                    {change.type === 'created' ? 'A' : change.type === 'modified' ? 'M' : 'D'}
-                                  </Badge>
-                                  <code className="text-muted-foreground">{change.file}</code>
-                                </div>
-                              ))}
-                            </div>
+                                  {copiedId === cmd.id ? (
+                                    <Check className="h-3 w-3" />
+                                  ) : (
+                                    <Copy className="h-3 w-3" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>복사</TooltipContent>
+                            </Tooltip>
                           </div>
-                        )}
 
-                        {/* Duration */}
-                        {cmd.duration && cmd.status === 'completed' && (
-                          <div className="ml-8 mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-                            <Clock className="h-3 w-3" />
-                            {cmd.duration}초 소요
-                          </div>
-                        )}
-                      </div>
-                    ))
+                          {/* AI Response */}
+                          {aiInterpretation && (
+                            <div className="ml-8 mt-2">
+                              <div className="rounded-lg bg-muted/50 p-3 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Code2 className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs font-medium text-muted-foreground">
+                                    Claude 해석
+                                    {aiInterpretation.confidence !== undefined && (
+                                      <span className="ml-2 text-xs">
+                                        (신뢰도: {Math.round(aiInterpretation.confidence * 100)}%)
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                                {aiInterpretation.intent && (
+                                  <p className="text-sm">
+                                    <span className="font-medium">의도:</span> {aiInterpretation.intent}
+                                  </p>
+                                )}
+                                {aiInterpretation.reasoning && (
+                                  <p className="text-sm text-muted-foreground">
+                                    {aiInterpretation.reasoning}
+                                  </p>
+                                )}
+                                {aiInterpretation.suggestedActions && aiInterpretation.suggestedActions.length > 0 && (
+                                  <div className="text-sm">
+                                    <span className="font-medium">제안 작업:</span>
+                                    <ul className="list-disc list-inside ml-2 text-muted-foreground">
+                                      {aiInterpretation.suggestedActions.map((action: string, i: number) => (
+                                        <li key={i}>{action}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* CLI Commands */}
+                          {cliCommands.length > 0 && (
+                            <div className="ml-8 mt-2">
+                              <div className="rounded-lg bg-zinc-950 p-3 font-mono text-xs">
+                                {cliCommands.map((cliCmd, i) => (
+                                  <div key={i} className="text-green-400">
+                                    $ {cliCmd}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Execution Result */}
+                          {executionResult && (
+                            <div className="ml-8 mt-2">
+                              <div className={cn(
+                                'rounded-lg p-3 font-mono text-xs whitespace-pre-wrap',
+                                executionResult.success ? 'bg-zinc-950 text-zinc-300' : 'bg-red-950/50 text-red-300'
+                              )}>
+                                {executionResult.output || executionResult.error || '결과 없음'}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Code Changes */}
+                          {codeChanges.length > 0 && (
+                            <div className="ml-8 mt-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <FileCode className="h-3 w-3 text-muted-foreground" />
+                                <span className="text-xs font-medium text-muted-foreground">
+                                  변경된 파일 ({codeChanges.length})
+                                </span>
+                              </div>
+                              <div className="space-y-1">
+                                {codeChanges.map((change, i) => (
+                                  <div
+                                    key={i}
+                                    className="flex items-center gap-2 text-xs rounded px-2 py-1 bg-muted/50"
+                                  >
+                                    <Badge
+                                      variant="outline"
+                                      className={cn(
+                                        'text-[10px] px-1',
+                                        change.type === 'created' && 'text-green-500 border-green-500/50',
+                                        change.type === 'modified' && 'text-yellow-500 border-yellow-500/50',
+                                        change.type === 'deleted' && 'text-red-500 border-red-500/50'
+                                      )}
+                                    >
+                                      {change.type === 'created' ? 'A' : change.type === 'modified' ? 'M' : 'D'}
+                                    </Badge>
+                                    <code className="text-muted-foreground">{change.file}</code>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                   )}
 
                   {/* Executing Indicator */}
-                  {isExecuting && (
+                  {executeCommand.isPending && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Claude가 작업 중입니다...
+                    </div>
+                  )}
+
+                  {/* Error Display */}
+                  {executeCommand.isError && (
+                    <div className="flex items-center gap-2 text-sm text-red-500">
+                      <XCircle className="h-4 w-4" />
+                      {executeCommand.error instanceof Error ? executeCommand.error.message : '명령어 실행 실패'}
                     </div>
                   )}
                 </div>
@@ -495,11 +546,11 @@ export default function VibeCodingPage() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     placeholder="자연어로 원하는 기능을 설명하세요... (예: 사용자 인증 기능을 추가해줘)"
-                    disabled={isExecuting}
+                    disabled={executeCommand.isPending}
                     className="flex-1"
                   />
-                  <Button type="submit" disabled={!inputValue.trim() || isExecuting}>
-                    {isExecuting ? (
+                  <Button type="submit" disabled={!inputValue.trim() || executeCommand.isPending}>
+                    {executeCommand.isPending ? (
                       <Square className="h-4 w-4" />
                     ) : (
                       <Send className="h-4 w-4" />
@@ -507,7 +558,7 @@ export default function VibeCodingPage() {
                   </Button>
                 </form>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Enter로 전송 · Claude Code CLI가 자동으로 코드를 작성합니다
+                  Enter로 전송 · Claude가 자연어를 분석하여 코드 작업을 수행합니다
                 </p>
               </div>
             </CardContent>
@@ -570,17 +621,19 @@ export default function VibeCodingPage() {
                   </div>
                   <Separator />
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">총 소요 시간</span>
-                    <span className="font-medium">
-                      {commands.reduce((sum, c) => sum + (c.duration || 0), 0)}초
-                    </span>
+                    <span className="text-muted-foreground">세션 상태</span>
+                    <Badge variant={activeSession?.status === 'active' ? 'default' : 'secondary'}>
+                      {activeSession?.status === 'active' ? '활성' : activeSession?.status || '없음'}
+                    </Badge>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">변경된 파일</span>
-                    <span className="font-medium">
-                      {commands.reduce((sum, c) => sum + (c.codeChanges?.length || 0), 0)}개
-                    </span>
-                  </div>
+                  {activeSession && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">시작 시간</span>
+                      <span className="font-medium text-xs">
+                        {new Date(activeSession.created_at).toLocaleString('ko-KR')}
+                      </span>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -592,7 +645,7 @@ export default function VibeCodingPage() {
                 <CardContent>
                   <div className="space-y-2">
                     {commands
-                      .flatMap((c) => c.codeChanges || [])
+                      .flatMap((c) => parseCodeChanges(c.code_changes))
                       .slice(-5)
                       .reverse()
                       .map((change, i) => (
@@ -611,6 +664,9 @@ export default function VibeCodingPage() {
                           <code className="text-muted-foreground truncate">{change.file}</code>
                         </div>
                       ))}
+                    {commands.flatMap((c) => parseCodeChanges(c.code_changes)).length === 0 && (
+                      <p className="text-xs text-muted-foreground">변경 사항 없음</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>

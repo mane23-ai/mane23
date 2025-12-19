@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,16 +20,44 @@ import {
   User,
   Bell,
   Key,
-  Palette,
-  Globe,
-  Shield,
   Webhook,
   Github,
   Youtube,
   Instagram,
+  Globe,
+  Loader2,
+  Check,
+  AlertCircle,
 } from 'lucide-react';
+import { useAuth, useUserProfile } from '@/hooks/use-auth';
+import { useWorkspaces, useUpdateWorkspace, useCreateWorkspace } from '@/hooks/use-workspaces';
+import { createClient } from '@/lib/supabase/client';
 
 export default function SettingsPage() {
+  const { user, isLoading: authLoading } = useAuth();
+  const { profile } = useUserProfile();
+  const { workspaces, currentWorkspace, isLoading: workspacesLoading, setCurrentWorkspace } = useWorkspaces();
+  const updateWorkspace = useUpdateWorkspace();
+  const createWorkspace = useCreateWorkspace();
+
+  // 프로필 폼 상태
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    bio: '',
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  // 워크스페이스 폼 상태
+  const [workspaceForm, setWorkspaceForm] = useState({
+    name: '',
+  });
+  const [workspaceSaved, setWorkspaceSaved] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+
+  // 알림 설정 상태
   const [notifications, setNotifications] = useState({
     email: true,
     push: true,
@@ -37,6 +65,168 @@ export default function SettingsPage() {
     contentVerification: true,
     marketing: false,
   });
+  const [notificationsSaving, setNotificationsSaving] = useState(false);
+  const [notificationsSaved, setNotificationsSaved] = useState(false);
+
+  // API 키 상태
+  const [apiKeys, setApiKeys] = useState({
+    anthropic: '',
+    github: '',
+  });
+  const [apiKeysSaving, setApiKeysSaving] = useState(false);
+  const [apiKeysSaved, setApiKeysSaved] = useState(false);
+
+  // 프로필 데이터 로드
+  useEffect(() => {
+    if (profile) {
+      setProfileForm({
+        name: profile.name || '',
+        email: profile.email || '',
+        bio: user?.user_metadata?.bio || '',
+      });
+    }
+  }, [profile, user]);
+
+  // 워크스페이스 데이터 로드
+  useEffect(() => {
+    if (currentWorkspace) {
+      setWorkspaceForm({
+        name: currentWorkspace.name || '',
+      });
+      // 워크스페이스 설정에서 알림 설정 로드
+      const settings = currentWorkspace.settings as Record<string, unknown> | null;
+      if (settings?.notifications) {
+        const notifSettings = settings.notifications as typeof notifications;
+        setNotifications(prev => ({
+          ...prev,
+          ...notifSettings,
+        }));
+      }
+    }
+  }, [currentWorkspace]);
+
+  // 프로필 저장
+  const handleSaveProfile = async () => {
+    setProfileSaving(true);
+    setProfileError(null);
+    setProfileSaved(false);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          name: profileForm.name,
+          full_name: profileForm.name,
+          bio: profileForm.bio,
+        },
+      });
+
+      if (error) throw error;
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 3000);
+    } catch (error) {
+      console.error('Profile save error:', error);
+      setProfileError(error instanceof Error ? error.message : '프로필 저장에 실패했습니다');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  // 워크스페이스 저장
+  const handleSaveWorkspace = async () => {
+    setWorkspaceError(null);
+    setWorkspaceSaved(false);
+
+    try {
+      if (currentWorkspace) {
+        await updateWorkspace.mutateAsync({
+          id: currentWorkspace.id,
+          data: { name: workspaceForm.name },
+        });
+      } else {
+        // 워크스페이스가 없으면 새로 생성
+        await createWorkspace.mutateAsync({
+          name: workspaceForm.name,
+        });
+      }
+      setWorkspaceSaved(true);
+      setTimeout(() => setWorkspaceSaved(false), 3000);
+    } catch (error) {
+      console.error('Workspace save error:', error);
+      setWorkspaceError(error instanceof Error ? error.message : '워크스페이스 저장에 실패했습니다');
+    }
+  };
+
+  // 알림 설정 저장
+  const handleSaveNotifications = async () => {
+    if (!currentWorkspace) return;
+
+    setNotificationsSaving(true);
+    setNotificationsSaved(false);
+
+    try {
+      const currentSettings = currentWorkspace.settings as Record<string, unknown> || {};
+      await updateWorkspace.mutateAsync({
+        id: currentWorkspace.id,
+        data: {
+          settings: {
+            ...currentSettings,
+            notifications,
+          },
+        },
+      });
+      setNotificationsSaved(true);
+      setTimeout(() => setNotificationsSaved(false), 3000);
+    } catch (error) {
+      console.error('Notifications save error:', error);
+    } finally {
+      setNotificationsSaving(false);
+    }
+  };
+
+  // API 키 저장
+  const handleSaveApiKey = async (keyType: 'anthropic' | 'github') => {
+    if (!currentWorkspace) return;
+
+    setApiKeysSaving(true);
+    setApiKeysSaved(false);
+
+    try {
+      const currentSettings = currentWorkspace.settings as Record<string, unknown> || {};
+      const apiKeysSettings = (currentSettings.apiKeys || {}) as Record<string, string>;
+
+      await updateWorkspace.mutateAsync({
+        id: currentWorkspace.id,
+        data: {
+          settings: {
+            ...currentSettings,
+            apiKeys: {
+              ...apiKeysSettings,
+              [keyType]: apiKeys[keyType],
+            },
+          },
+        },
+      });
+      setApiKeysSaved(true);
+      setTimeout(() => setApiKeysSaved(false), 3000);
+
+      // 저장 후 입력 필드 초기화 (보안)
+      setApiKeys(prev => ({ ...prev, [keyType]: '' }));
+    } catch (error) {
+      console.error('API key save error:', error);
+    } finally {
+      setApiKeysSaving(false);
+    }
+  };
+
+  // 로딩 상태
+  if (authLoading || workspacesLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -78,11 +268,24 @@ export default function SettingsPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="name">이름</Label>
-                  <Input id="name" placeholder="홍길동" />
+                  <Input
+                    id="name"
+                    placeholder="홍길동"
+                    value={profileForm.name}
+                    onChange={(e) => setProfileForm(prev => ({ ...prev, name: e.target.value }))}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="email">이메일</Label>
-                  <Input id="email" type="email" placeholder="user@example.com" />
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="user@example.com"
+                    value={profileForm.email}
+                    disabled
+                    className="bg-muted"
+                  />
+                  <p className="text-xs text-muted-foreground">이메일은 변경할 수 없습니다.</p>
                 </div>
               </div>
               <div className="space-y-2">
@@ -91,9 +294,31 @@ export default function SettingsPage() {
                   id="bio"
                   placeholder="간단한 자기소개를 입력하세요."
                   rows={3}
+                  value={profileForm.bio}
+                  onChange={(e) => setProfileForm(prev => ({ ...prev, bio: e.target.value }))}
                 />
               </div>
-              <Button>저장</Button>
+              {profileError && (
+                <div className="flex items-center gap-2 text-sm text-red-500">
+                  <AlertCircle className="h-4 w-4" />
+                  {profileError}
+                </div>
+              )}
+              <Button onClick={handleSaveProfile} disabled={profileSaving}>
+                {profileSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    저장 중...
+                  </>
+                ) : profileSaved ? (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    저장됨
+                  </>
+                ) : (
+                  '저장'
+                )}
+              </Button>
             </CardContent>
           </Card>
 
@@ -107,9 +332,37 @@ export default function SettingsPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="workspace-name">워크스페이스 이름</Label>
-                <Input id="workspace-name" placeholder="My Workspace" />
+                <Input
+                  id="workspace-name"
+                  placeholder="My Workspace"
+                  value={workspaceForm.name}
+                  onChange={(e) => setWorkspaceForm(prev => ({ ...prev, name: e.target.value }))}
+                />
               </div>
-              <Button>저장</Button>
+              {workspaceError && (
+                <div className="flex items-center gap-2 text-sm text-red-500">
+                  <AlertCircle className="h-4 w-4" />
+                  {workspaceError}
+                </div>
+              )}
+              <Button
+                onClick={handleSaveWorkspace}
+                disabled={updateWorkspace.isPending || createWorkspace.isPending}
+              >
+                {(updateWorkspace.isPending || createWorkspace.isPending) ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    저장 중...
+                  </>
+                ) : workspaceSaved ? (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    저장됨
+                  </>
+                ) : (
+                  currentWorkspace ? '저장' : '워크스페이스 생성'
+                )}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -183,6 +436,27 @@ export default function SettingsPage() {
                   }
                 />
               </div>
+              <Separator />
+              <Button onClick={handleSaveNotifications} disabled={notificationsSaving || !currentWorkspace}>
+                {notificationsSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    저장 중...
+                  </>
+                ) : notificationsSaved ? (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    저장됨
+                  </>
+                ) : (
+                  '알림 설정 저장'
+                )}
+              </Button>
+              {!currentWorkspace && (
+                <p className="text-xs text-muted-foreground">
+                  알림 설정을 저장하려면 먼저 워크스페이스를 생성하세요.
+                </p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -205,11 +479,19 @@ export default function SettingsPage() {
                     type="password"
                     placeholder="sk-ant-..."
                     className="flex-1"
+                    value={apiKeys.anthropic}
+                    onChange={(e) => setApiKeys(prev => ({ ...prev, anthropic: e.target.value }))}
                   />
-                  <Button variant="outline">저장</Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSaveApiKey('anthropic')}
+                    disabled={apiKeysSaving || !apiKeys.anthropic || !currentWorkspace}
+                  >
+                    {apiKeysSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : '저장'}
+                  </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Claude API 사용을 위한 키입니다.
+                  Claude API 사용을 위한 키입니다. 바이브 코딩 기능에 사용됩니다.
                 </p>
               </div>
               <Separator />
@@ -221,13 +503,32 @@ export default function SettingsPage() {
                     type="password"
                     placeholder="ghp_..."
                     className="flex-1"
+                    value={apiKeys.github}
+                    onChange={(e) => setApiKeys(prev => ({ ...prev, github: e.target.value }))}
                   />
-                  <Button variant="outline">저장</Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSaveApiKey('github')}
+                    disabled={apiKeysSaving || !apiKeys.github || !currentWorkspace}
+                  >
+                    {apiKeysSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : '저장'}
+                  </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   GitHub 레포지토리 연동을 위한 토큰입니다.
                 </p>
               </div>
+              {apiKeysSaved && (
+                <div className="flex items-center gap-2 text-sm text-green-500">
+                  <Check className="h-4 w-4" />
+                  API 키가 저장되었습니다.
+                </div>
+              )}
+              {!currentWorkspace && (
+                <p className="text-xs text-muted-foreground">
+                  API 키를 저장하려면 먼저 워크스페이스를 생성하세요.
+                </p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -255,7 +556,9 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 </div>
-                <Button variant="outline">연결됨</Button>
+                <Button variant="outline" disabled>
+                  준비 중
+                </Button>
               </div>
 
               {/* YouTube */}
@@ -271,7 +574,7 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 </div>
-                <Button>연결하기</Button>
+                <Button disabled>준비 중</Button>
               </div>
 
               {/* Instagram */}
@@ -287,7 +590,7 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 </div>
-                <Button>연결하기</Button>
+                <Button disabled>준비 중</Button>
               </div>
 
               {/* Blog */}
@@ -303,7 +606,7 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 </div>
-                <Button>연결하기</Button>
+                <Button disabled>준비 중</Button>
               </div>
             </CardContent>
           </Card>
